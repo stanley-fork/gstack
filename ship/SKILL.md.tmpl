@@ -422,6 +422,7 @@ Substitute actual values from the preceding steps. Use `0` for Greptile fields i
 2. Push (non-fatal):
 ```bash
 ~/.claude/skills/gstack/bin/gstack-sync push-ship /tmp/gstack-ship-log.json 2>/dev/null && echo "Synced to team ✓" || true
+~/.claude/skills/gstack/bin/gstack-sync push-transcript 2>/dev/null || true
 ```
 
 ---

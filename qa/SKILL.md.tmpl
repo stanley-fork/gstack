@@ -245,6 +245,7 @@ $B snapshot -i -a -o "$REPORT_DIR/screenshots/issue-002.png"
    }
    QAEOF
    ~/.claude/skills/gstack/bin/gstack-sync push-qa .gstack/qa-reports/qa-sync.json 2>/dev/null && echo "Synced to team ✓" || true
+   ~/.claude/skills/gstack/bin/gstack-sync push-transcript 2>/dev/null || true
    ```
    Substitute actual values. Uses snake_case keys matching the Supabase schema.
 

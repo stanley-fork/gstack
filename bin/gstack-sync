@@ -7,6 +7,7 @@
 #   gstack-sync test                     — validate full sync flow
 #   gstack-sync show [evals|ships|retros] — view team data
 #   gstack-sync push-{eval,retro,qa,ship,greptile} <file> — push data
+#   gstack-sync push-transcript            — sync Claude session transcripts
 #   gstack-sync pull                     — pull team data to local cache
 #   gstack-sync drain                    — drain the offline queue
 #   gstack-sync logout                   — clear auth tokens
@@ -45,6 +46,9 @@ case "${1:-}" in
     FILE="${2:?Usage: gstack-sync push-greptile <file.json>}"
     exec bun run "$GSTACK_DIR/lib/cli-sync.ts" push-greptile "$FILE"
     ;;
+  push-transcript)
+    exec bun run "$GSTACK_DIR/lib/cli-sync.ts" push-transcript
+    ;;
   test)
     exec bun run "$GSTACK_DIR/lib/cli-sync.ts" test
     ;;
@@ -67,12 +71,13 @@ case "${1:-}" in
     echo "  setup                 Interactive auth flow (opens browser)"
     echo "  status                Show sync status (queue, cache, connection)"
     echo "  test                  Validate full sync flow (push + pull)"
-    echo "  show [evals|ships|retros]  View team data in terminal"
+    echo "  show [evals|ships|retros|sessions]  View team data in terminal"
     echo "  push-eval <file>      Push eval result JSON to team store"
     echo "  push-retro <file>     Push retro snapshot JSON"
     echo "  push-qa <file>        Push QA report JSON"
     echo "  push-ship <file>      Push ship log JSON"
     echo "  push-greptile <file>  Push Greptile triage entry JSON"
+    echo "  push-transcript       Sync Claude session transcripts"
     echo "  pull                  Pull team data to local cache"
     echo "  drain                 Drain the offline sync queue"
     echo "  logout                Clear auth tokens"

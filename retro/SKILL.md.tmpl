@@ -349,6 +349,7 @@ Include backlog data in the JSON when TODOS.md exists:
 After writing the JSON snapshot, sync to the team store (non-fatal, silent if not configured):
 ```bash
 ~/.claude/skills/gstack/bin/gstack-sync push-retro ".context/retros/${today}-${next}.json" 2>/dev/null && echo "Synced to team ✓" || true
+~/.claude/skills/gstack/bin/gstack-sync push-transcript 2>/dev/null || true
 ```
 
 ### Step 14: Write the Narrative

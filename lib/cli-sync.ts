@@ -4,10 +4,12 @@
  */
 
 import * as fs from 'fs';
-import { getTeamConfig, resolveSyncConfig, clearAuthTokens, isSyncConfigured } from './sync-config';
+import * as path from 'path';
+import { getTeamConfig, resolveSyncConfig, clearAuthTokens, isSyncConfigured, getSyncConfigPath } from './sync-config';
 import { runDeviceAuth } from './auth';
-import { pushEvalRun, pushRetro, pushQAReport, pushShipLog, pushGreptileTriage, pushHeartbeat, pullTable, drainQueue, getSyncStatus } from './sync';
-import { readJSON } from './util';
+import { pushEvalRun, pushRetro, pushQAReport, pushShipLog, pushGreptileTriage, pushHeartbeat, pullTable, pullTranscripts, drainQueue, getSyncStatus } from './sync';
+import { readJSON, getGitRoot, atomicWriteJSON } from './util';
+import { syncTranscripts } from './transcript-sync';
 
 // --- Main (only when run directly, not imported) ---
 
@@ -35,6 +37,9 @@ async function main() {
     case 'push-greptile':
       await cmdPushFile('greptile', process.argv[3]);
       break;
+    case 'push-transcript':
+      await cmdPushTranscript();
+      break;
     case 'test':
       await cmdTest();
       break;
@@ -57,11 +62,43 @@ async function main() {
 }
 
 async function cmdSetup(): Promise<void> {
-  const team = getTeamConfig();
+  let team = getTeamConfig();
+
+  // If no .gstack-sync.json, interactively create one
   if (!team) {
-    console.error('No .gstack-sync.json found in project root.');
-    console.error('Ask your team admin to set up team sync first.');
-    process.exit(1);
+    const root = getGitRoot();
+    if (!root) {
+      console.error('Not in a git repository. Run this from your project root.');
+      process.exit(1);
+    }
+
+    console.log('No .gstack-sync.json found. Setting up team sync.\n');
+
+    const rl = require('readline').createInterface({ input: process.stdin, output: process.stdout });
+    const ask = (q: string): Promise<string> => new Promise(resolve => rl.question(q, resolve));
+
+    const supabaseUrl = (await ask('Supabase URL (e.g., https://xyz.supabase.co): ')).trim();
+    if (!supabaseUrl) { rl.close(); console.error('URL is required.'); process.exit(1); }
+
+    const supabaseAnonKey = (await ask('Supabase anon key (from Project Settings > API): ')).trim();
+    if (!supabaseAnonKey) { rl.close(); console.error('Anon key is required.'); process.exit(1); }
+
+    const teamSlug = (await ask('Team slug (short name, e.g., my-team): ')).trim();
+    if (!teamSlug) { rl.close(); console.error('Team slug is required.'); process.exit(1); }
+
+    rl.close();
+
+    const configPath = path.join(root, '.gstack-sync.json');
+    const config = { supabase_url: supabaseUrl, supabase_anon_key: supabaseAnonKey, team_slug: teamSlug };
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
+    console.log(`\nCreated ${configPath}`);
+    console.log('Commit this file to your repo so team members get it automatically.\n');
+
+    team = getTeamConfig();
+    if (!team) {
+      console.error('Failed to read created config. Check the file.');
+      process.exit(1);
+    }
   }
 
   console.log(`Team: ${team.team_slug}`);
@@ -148,7 +185,7 @@ async function cmdPull(): Promise<void> {
     process.exit(1);
   }
 
-  const tables = ['eval_runs', 'retro_snapshots', 'qa_reports', 'ship_logs', 'greptile_triage'];
+  const tables = ['eval_runs', 'retro_snapshots', 'qa_reports', 'ship_logs', 'greptile_triage', 'session_transcripts'];
   let total = 0;
 
   for (const table of tables) {
@@ -160,6 +197,26 @@ async function cmdPull(): Promise<void> {
   }
 
   console.log(`\nPulled ${total} total rows to local cache.`);
+}
+
+async function cmdPushTranscript(): Promise<void> {
+  if (!isSyncConfigured()) {
+    process.exit(0); // Silent — sync not configured is normal
+  }
+
+  const config = resolveSyncConfig();
+  if (!config?.syncTranscripts) {
+    console.log('Transcript sync is disabled. Enable with: gstack-config set sync_transcripts true');
+    process.exit(0);
+  }
+
+  const result = await syncTranscripts();
+  if (result.pushed > 0) {
+    console.log(`Synced ${result.pushed} session${result.pushed > 1 ? 's' : ''} to team store`);
+  }
+  if (result.errors > 0) {
+    console.log(`  (${result.errors} queued for retry)`);
+  }
 }
 
 async function cmdDrain(): Promise<void> {
@@ -352,6 +409,53 @@ export function formatShipTable(shipLogs: Record<string, unknown>[]): string {
   return lines.join('\n');
 }
 
+/** Format a duration in milliseconds as a human-readable string. */
+function formatDuration(startedAt: string, endedAt: string): string {
+  const ms = new Date(endedAt).getTime() - new Date(startedAt).getTime();
+  if (ms < 60_000) return '<1m';
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
+  const h = Math.floor(ms / 3_600_000);
+  const m = Math.round((ms % 3_600_000) / 60_000);
+  return m > 0 ? `${h}h${m}m` : `${h}h`;
+}
+
+/** Format session transcripts table. Pure function for testing. */
+export function formatSessionTable(sessions: Record<string, unknown>[]): string {
+  if (sessions.length === 0) return 'No sessions yet.\n';
+  const lines: string[] = [];
+  lines.push('');
+  lines.push('Recent Sessions');
+  lines.push('═'.repeat(100));
+  lines.push(
+    '  ' +
+    'Date'.padEnd(13) +
+    'Repo'.padEnd(22) +
+    'Summary'.padEnd(40) +
+    'Turns'.padEnd(7) +
+    'Dur'.padEnd(7) +
+    'Tools'
+  );
+  lines.push('─'.repeat(100));
+
+  for (const r of sessions.slice(0, 30)) {
+    const date = String(r.started_at || r.created_at || '').slice(0, 10);
+    const repo = String(r.repo_slug || '').slice(0, 20).padEnd(22);
+    const summary = String(r.summary || '—').slice(0, 38).padEnd(40);
+    const turns = String(r.total_turns || '').padEnd(7);
+    const dur = (r.started_at && r.ended_at)
+      ? formatDuration(String(r.started_at), String(r.ended_at)).padEnd(7)
+      : '—'.padEnd(7);
+    const tools = Array.isArray(r.tools_used)
+      ? (r.tools_used as string[]).slice(0, 5).join(', ')
+      : '—';
+    lines.push(`  ${date.padEnd(13)}${repo}${summary}${turns}${dur}${tools}`);
+  }
+
+  lines.push('─'.repeat(100));
+  lines.push('');
+  return lines.join('\n');
+}
+
 async function cmdShow(args: string[]): Promise<void> {
   if (!isSyncConfigured()) {
     console.error('Sync not configured. Run gstack-sync setup first.');
@@ -383,6 +487,12 @@ async function cmdShow(args: string[]): Promise<void> {
       const commits = (r as any).metrics?.commits;
       console.log(`  ${date}  ${commits ? commits + ' commits' : ''}  ${streak ? 'streak: ' + streak + 'd' : ''}`);
     }
+    return;
+  }
+
+  if (sub === 'sessions') {
+    const rows = await pullTranscripts();
+    console.log(formatSessionTable(rows));
     return;
   }
 

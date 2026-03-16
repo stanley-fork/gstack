@@ -213,6 +213,11 @@ export function pushHeartbeat(): Promise<boolean> {
   return pushWithSync('sync_heartbeats', { hostname: os.hostname() }, { addRepoSlug: false });
 }
 
+/** Push a session transcript to Supabase. repo_slug is in the data (from getRemoteSlugForPath). */
+export function pushTranscript(data: Record<string, unknown>): Promise<boolean> {
+  return pushWithSync('session_transcripts', data, { addRepoSlug: false });
+}
+
 // --- Pull operations ---
 
 /**
@@ -275,6 +280,18 @@ export async function pullRetros(opts?: { repoSlug?: string; limit?: number }): 
   parts.push(`limit=${opts?.limit || 50}`);
 
   return pullTable('retro_snapshots', parts.join('&'));
+}
+
+/** Pull team session transcripts. */
+export async function pullTranscripts(opts?: { repoSlug?: string; limit?: number }): Promise<Record<string, unknown>[]> {
+  const config = resolveSyncConfig();
+  if (!config) return [];
+
+  const parts = [`team_id=eq.${config.auth.team_id}`, 'order=started_at.desc'];
+  if (opts?.repoSlug) parts.push(`repo_slug=eq.${opts.repoSlug}`);
+  parts.push(`limit=${opts?.limit || 50}`);
+
+  return pullTable('session_transcripts', parts.join('&'));
 }
 
 // --- Offline queue ---

@@ -3,7 +3,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { formatTeamSummary, formatEvalTable, formatShipTable, formatRelativeTime } from '../lib/cli-sync';
+import { formatTeamSummary, formatEvalTable, formatShipTable, formatSessionTable, formatRelativeTime } from '../lib/cli-sync';
 
 describe('formatRelativeTime', () => {
   test('returns "just now" for recent timestamps', () => {
@@ -104,5 +104,65 @@ describe('formatShipTable', () => {
 
   test('returns message for empty data', () => {
     expect(formatShipTable([])).toContain('No ship logs yet');
+  });
+});
+
+describe('formatSessionTable', () => {
+  test('formats sessions with enriched data', () => {
+    const output = formatSessionTable([
+      {
+        started_at: '2026-03-15T10:00:00Z',
+        ended_at: '2026-03-15T10:15:00Z',
+        repo_slug: 'garrytan/gstack',
+        summary: 'Fixed login page CSS and added tests',
+        total_turns: 8,
+        tools_used: ['Edit', 'Bash', 'Read'],
+      },
+    ]);
+
+    expect(output).toContain('Recent Sessions');
+    expect(output).toContain('2026-03-15');
+    expect(output).toContain('garrytan/gstack');
+    expect(output).toContain('Fixed login');
+    expect(output).toContain('8');
+    expect(output).toContain('15m');
+    expect(output).toContain('Edit');
+  });
+
+  test('handles sessions without enrichment', () => {
+    const output = formatSessionTable([
+      {
+        started_at: '2026-03-15T10:00:00Z',
+        ended_at: '2026-03-15T10:00:30Z',
+        repo_slug: 'myproject',
+        summary: null,
+        total_turns: 2,
+        tools_used: null,
+      },
+    ]);
+
+    expect(output).toContain('Recent Sessions');
+    expect(output).toContain('myproject');
+    // null summary shows as '—'
+    expect(output).toContain('—');
+  });
+
+  test('returns message for empty data', () => {
+    expect(formatSessionTable([])).toContain('No sessions yet');
+  });
+
+  test('formats duration correctly', () => {
+    const output = formatSessionTable([
+      {
+        started_at: '2026-03-15T10:00:00Z',
+        ended_at: '2026-03-15T11:30:00Z',
+        repo_slug: 'repo',
+        summary: 'Long session',
+        total_turns: 50,
+        tools_used: ['Bash'],
+      },
+    ]);
+
+    expect(output).toContain('1h30m');
   });
 });

@@ -277,6 +277,44 @@
 **Priority:** P3
 **Depends on:** Browse sessions
 
+## Team Sync
+
+### Streaming parser for large session files
+
+**What:** Replace readFileSync with readline/createReadStream for session files >10MB.
+
+**Why:** Currently skip files >10MB. Long sessions (1000+ turns, 35MB) lose enrichment data (tools_used, full turn count).
+
+**Context:** Current 10MB cap is defensive. Session files at `~/.claude/projects/{hash}/{sid}.jsonl` can be 35MB for marathon sessions. Streaming parser removes the cap while keeping memory usage constant.
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** Transcript sync (Phase 3)
+
+### Session effectiveness scoring
+
+**What:** Compute a 1-5 effectiveness score per session based on turns to achieve goal, tool diversity, whether code was shipped, and session duration.
+
+**Why:** Enables `show sessions --best` and team-level AI effectiveness metrics. Raw data (tools_used, turns, duration, summary) already in Supabase after transcript sync.
+
+**Context:** Year 2 roadmap item. Scoring heuristics need iteration. Could start with: fewer turns = more efficient, more tool diversity = better problem decomposition, shipped code (detected via git) = successful outcome.
+
+**Effort:** M
+**Priority:** P2
+**Depends on:** Transcript sync (Phase 3)
+
+### Weekly AI usage digest
+
+**What:** Supabase edge function that runs weekly, aggregates session_transcripts + eval_runs, sends team summary to Slack/email.
+
+**Why:** Passive team visibility without running commands. "Your team ran 47 sessions this week. Top tools: Edit(156), Bash(89). Sarah shipped 3 PRs via /ship."
+
+**Context:** Design doc Phase 4 item. Requires Supabase edge functions + Slack/email integration. Transcript data from Phase 3 is the primary input alongside eval_runs.
+
+**Effort:** L
+**Priority:** P2
+**Depends on:** Transcript sync (Phase 3), Supabase edge functions
+
 ## Infrastructure
 
 ### /setup-gstack-upload skill (S3 bucket)
