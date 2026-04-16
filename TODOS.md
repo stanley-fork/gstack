@@ -1,5 +1,19 @@
 # TODOS
 
+## Browse
+
+### Scope sidebar-agent kill to session PID, not `pkill -f sidebar-agent\.ts`
+
+**What:** `shutdown()` in `browse/src/server.ts:1193` uses `pkill -f sidebar-agent\.ts` to kill the sidebar-agent daemon, which matches every sidebar-agent on the machine, not just the one this server spawned. Replace with PID tracking: store the sidebar-agent PID when `cli.ts` spawns it (via state file or env), then `process.kill(pid, 'SIGTERM')` in `shutdown()`.
+
+**Why:** A user running two Conductor worktrees (or any multi-session setup), each with its own `$B connect`, closes one browser window ... and the other worktree's sidebar-agent gets killed too. The blast radius was there before, but the v0.18.1.0 disconnect-cleanup fix makes it more reachable: every user-close now runs the full `shutdown()` path, whereas before user-close bypassed it.
+
+**Context:** Surfaced by /ship's adversarial review on v0.18.1.0. Pre-existing code, not introduced by the fix. Fix requires propagating the sidebar-agent PID from `cli.ts` spawn site (~line 885) into the server's state file so `shutdown()` can target just this session's agent. Related: `browse/src/cli.ts` spawns with `Bun.spawn(...).unref()` and already captures `agentProc.pid`.
+
+**Effort:** S (human: ~2h / CC: ~15min)
+**Priority:** P2
+**Depends on:** None
+
 ## Sidebar Security
 
 ### ML Prompt Injection Classifier

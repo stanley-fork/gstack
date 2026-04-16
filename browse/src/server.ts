@@ -757,8 +757,16 @@ const idleCheckInterval = setInterval(() => {
 // server can become an orphan — keeping chrome-headless-shell alive and
 // causing console-window flicker on Windows. Poll the parent PID every 15s
 // and self-terminate if it is gone.
+//
+// Headed mode (BROWSE_HEADED=1 or BROWSE_PARENT_PID=0): The user controls
+// the browser window lifecycle. The CLI exits immediately after connect,
+// so the watchdog would kill the server prematurely. Disabled in both cases
+// as defense-in-depth — the CLI sets PID=0 for headed mode, and the server
+// also checks BROWSE_HEADED in case a future launcher forgets.
+// Cleanup happens via browser disconnect event or $B disconnect.
 const BROWSE_PARENT_PID = parseInt(process.env.BROWSE_PARENT_PID || '0', 10);
-if (BROWSE_PARENT_PID > 0) {
+const IS_HEADED_WATCHDOG = process.env.BROWSE_HEADED === '1';
+if (BROWSE_PARENT_PID > 0 && !IS_HEADED_WATCHDOG) {
   setInterval(() => {
     try {
       process.kill(BROWSE_PARENT_PID, 0); // signal 0 = existence check only, no signal sent
@@ -767,6 +775,10 @@ if (BROWSE_PARENT_PID > 0) {
       shutdown();
     }
   }, 15_000);
+} else if (IS_HEADED_WATCHDOG) {
+  console.log('[browse] Parent-process watchdog disabled (headed mode)');
+} else if (BROWSE_PARENT_PID === 0) {
+  console.log('[browse] Parent-process watchdog disabled (BROWSE_PARENT_PID=0)');
 }
 
 // ─── Command Sets (from commands.ts — single source of truth) ───
@@ -793,6 +805,10 @@ function emitInspectorEvent(event: any): void {
 
 // ─── Server ────────────────────────────────────────────────────
 const browserManager = new BrowserManager();
+// When the user closes the headed browser window, run full cleanup
+// (kill sidebar-agent, save session, remove profile locks, delete state file)
+// before exiting with code 2. Exit code 2 distinguishes user-close from crashes (1).
+browserManager.onDisconnect = () => shutdown(2);
 let isShuttingDown = false;
 
 // Test if a port is available by binding and immediately releasing.
@@ -1180,7 +1196,7 @@ async function handleCommand(body: any, tokenInfo?: TokenInfo | null): Promise<R
   });
 }
 
-async function shutdown() {
+async function shutdown(exitCode: number = 0) {
   if (isShuttingDown) return;
   isShuttingDown = true;
 
@@ -1221,12 +1237,15 @@ async function shutdown() {
   // Clean up state file
   safeUnlinkQuiet(config.stateFile);
 
-  process.exit(0);
+  process.exit(exitCode);
 }
 
 // Handle signals
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+// Node passes the signal name (e.g. 'SIGTERM') as the first arg to listeners.
+// Wrap so shutdown() receives no args — otherwise the string gets passed as
+// exitCode and process.exit() coerces it to NaN, exiting with code 1 instead of 0.
+process.on('SIGTERM', () => shutdown());
+process.on('SIGINT', () => shutdown());
 // Windows: taskkill /F bypasses SIGTERM, but 'exit' fires for some shutdown paths.
 // Defense-in-depth — primary cleanup is the CLI's stale-state detection via health check.
 if (process.platform === 'win32') {

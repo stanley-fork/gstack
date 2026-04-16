@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.18.1.0] - 2026-04-16
+
+### Fixed
+- **`/open-gstack-browser` actually stays open now.** If you ran `/open-gstack-browser` or `$B connect` and your browser vanished roughly 15 seconds later, this was why: a watchdog inside the browse server was polling the CLI process that spawned it, and when the CLI exited (which it does, immediately, right after launching the browser), the watchdog said "orphan!" and killed everything. The fix disables that watchdog for headed mode, both in the CLI (always set `BROWSE_PARENT_PID=0` for headed launches) and in the server (skip the watchdog entirely when `BROWSE_HEADED=1`). Two layers of defense in case a future launcher forgets to pass the env var. Thanks to @rocke2020 (#1020), @sanghyuk-seo-nexcube (#1018), @rodbland2021 (#1012), and @jbetala7 (#986) for independently diagnosing this and sending in clean, well-documented fixes.
+- **Closing the headed browser window now cleans up properly.** Before this release, clicking the X on the GStack Browser window skipped the server's cleanup routine and exited the process directly. That left behind stale sidebar-agent processes polling a dead server, unsaved chat session state, leftover Chromium profile locks (which cause "profile in use" errors on the next `$B connect`), and a stale `browse.json` state file. Now the disconnect handler routes through the full `shutdown()` path first, cleans everything, and then exits with code 2 (which still distinguishes user-close from crash).
+- **CI/Claude Code Bash calls can now share a persistent headless server.** The headless spawn path used to hardcode the CLI's own PID as the watchdog target, ignoring `BROWSE_PARENT_PID=0` even if you set it in your environment. Now `BROWSE_PARENT_PID=0 $B goto https://...` keeps the server alive across short-lived CLI invocations, which is what multi-step workflows (CI matrices, Claude Code's Bash tool, cookie picker flows) actually want.
+- **`SIGTERM` / `SIGINT` shutdown now exits with code 0 instead of 1.** Regression caught during /ship's adversarial review: when `shutdown()` started accepting an `exitCode` argument, Node's signal listeners silently passed the signal name (`'SIGTERM'`) as the exit code, which got coerced to `NaN` and used `1`. Wrapped the listeners so they call `shutdown()` with no args. Your `Ctrl+C` now exits clean again.
+
+### For contributors
+- `test/relink.test.ts` no longer flakes under parallel test load. The 23 tests in that file each shell out to `gstack-config` + `gstack-relink` (bash subprocess work), and under `bun test` with other suites running, each test drifted ~200ms past Bun's 5s default. Wrapped `test` to default the per-test timeout to 15s with `Object.assign` preserving `.only`/`.skip`/`.each` sub-APIs.
+- `BrowserManager` gained an `onDisconnect` callback (wired by `server.ts` to `shutdown(2)`), replacing the direct `process.exit(2)` in the disconnect handler. The callback is wrapped with try/catch + Promise rejection handling so a rejecting cleanup path still exits the process instead of leaving a live server attached to a dead browser.
+- `shutdown()` now accepts an optional `exitCode: number = 0` parameter, used by the disconnect path (exit 2) and the signal path (default 0). Same cleanup code, two call sites, distinct exit codes.
+- `BROWSE_PARENT_PID` parsing in `cli.ts` now matches `server.ts`: `parseInt` instead of strict string equality, so `BROWSE_PARENT_PID=0\n` (common from shell `export`) is honored.
+
 ## [0.18.0.1] - 2026-04-16
 
 ### Fixed

@@ -72,6 +72,12 @@ export class BrowserManager {
   private connectionMode: 'launched' | 'headed' = 'launched';
   private intentionalDisconnect = false;
 
+  // Called when the headed browser disconnects without intentional teardown
+  // (user closed the window). Wired up by server.ts to run full cleanup
+  // (sidebar-agent, state file, profile locks) before exiting with code 2.
+  // Returns void or a Promise; rejections are caught and fall back to exit(2).
+  public onDisconnect: (() => void | Promise<void>) | null = null;
+
   getConnectionMode(): 'launched' | 'headed' { return this.connectionMode; }
 
   // ─── Watch Mode Methods ─────────────────────────────────
@@ -467,13 +473,32 @@ export class BrowserManager {
       await this.newTab();
     }
 
-    // Browser disconnect handler — exit code 2 distinguishes from crashes (1)
+    // Browser disconnect handler — exit code 2 distinguishes from crashes (1).
+    // Calls onDisconnect() to trigger full shutdown (kill sidebar-agent, save
+    // session, clean profile locks + state file) before exit. Falls back to
+    // direct process.exit(2) if no callback is wired up, or if the callback
+    // throws/rejects — never leave the process running with a dead browser.
     if (this.browser) {
       this.browser.on('disconnected', () => {
         if (this.intentionalDisconnect) return;
         console.error('[browse] Real browser disconnected (user closed or crashed).');
         console.error('[browse] Run `$B connect` to reconnect.');
-        process.exit(2);
+        if (!this.onDisconnect) {
+          process.exit(2);
+          return;
+        }
+        try {
+          const result = this.onDisconnect();
+          if (result && typeof (result as Promise<void>).catch === 'function') {
+            (result as Promise<void>).catch((err) => {
+              console.error('[browse] onDisconnect rejected:', err);
+              process.exit(2);
+            });
+          }
+        } catch (err) {
+          console.error('[browse] onDisconnect threw:', err);
+          process.exit(2);
+        }
       });
     }
 
